@@ -3,6 +3,7 @@
 I build software with a product mindset — shaped by real operations leadership.
 
 ## Now
+- Creator www.rapidaagenda.com.br - A solution for your barbershop, beauty salon, and aesthetic clinic: never lose appointments again and avoid disorganization with your cash flow.
 - Building **CultureUp (SaaS)** — tasks/projects + People & Culture
 - Learning by shipping: **Supabase (Postgres/Auth/RLS)**, **SQL**, **APIs/Webhooks**
 - Focus: **Systems / Full Stack**, with strong business + operations context
