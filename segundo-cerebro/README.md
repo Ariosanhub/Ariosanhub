@@ -23,6 +23,9 @@ você voltar e entender seus próprios padrões ao longo do tempo.
   assertividade (passivo/agressivo/assertivo, técnica DESC), limites no trabalho,
   reestruturação cognitiva, liderança sem precisar agradar todo mundo.
 - **Hábitos** — checklist diário com sequências (streaks).
+- **Agenda** — compromissos e lembretes com data/hora, mais um link de assinatura
+  (.ics) para ver os mesmos compromissos no Google Calendar ou no Apple Calendar
+  — sem precisar de login OAuth, atualiza sozinho a cada hora.
 - **Painel** — histórico visual: tendência de humor, distorções cognitivas mais
   frequentes, progresso de lições, hábitos ativos.
 
@@ -69,10 +72,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 Gere uma em [console.anthropic.com](https://console.anthropic.com/settings/keys).
 
-Por padrão a Nina usa o modelo `claude-opus-5` (o mais capaz). Se preferir um
-custo menor no uso diário, defina `ANTHROPIC_MODEL=claude-sonnet-5` (mais barato)
-ou `claude-haiku-4-5` (mais barato ainda) no `.env.local` — veja preços atuais em
-[anthropic.com/pricing](https://anthropic.com/pricing).
+Por padrão a Nina usa o `claude-haiku-4-5` — o modelo mais barato da Anthropic
+(US$1/US$5 por milhão de tokens de entrada/saída), o que para uso pessoal diário
+custa centavos por mês. Se quiser respostas mais elaboradas e não se importar com
+o custo maior, defina `ANTHROPIC_MODEL=claude-sonnet-5` ou `claude-opus-5` no
+`.env.local` — veja preços atuais em [anthropic.com/pricing](https://anthropic.com/pricing).
 
 ### 3. Rodar localmente
 
@@ -98,8 +102,15 @@ celular pelo navegador ("Adicionar à tela de início").
 
 `profiles`, `onboarding_answers`, `mood_checkins`, `journal_entries`,
 `chat_messages`, `lessons` (conteúdo compartilhado, somente leitura),
-`lesson_progress`, `habits`, `habit_logs` — todas com RLS habilitada e escopadas
-por usuário (exceto `lessons`, que é a biblioteca de conteúdo).
+`lesson_progress`, `habits`, `habit_logs`, `agenda_events` — todas com RLS
+habilitada e escopadas por usuário (exceto `lessons`, que é a biblioteca de
+conteúdo).
+
+> O link de assinatura da Agenda (`/api/ics/<token>`) usa um token aleatório
+> guardado em `profiles.ics_token` para funcionar sem login (é assim que o
+> Google/Apple Calendar conseguem buscá-lo). Trate esse link como uma senha —
+> quem tiver o link vê seus compromissos. Se ele vazar, é só gerar um novo token
+> no banco (`update profiles set ics_token = gen_random_uuid() where id = ...`).
 
 ## Aviso importante
 

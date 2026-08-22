@@ -74,7 +74,6 @@ export async function POST(req: NextRequest) {
           model: CHAT_MODEL,
           max_tokens: 2048,
           system: systemPrompt,
-          output_config: { effort: "medium" },
           messages,
         });
 

@@ -12,4 +12,4 @@ export function anthropicClient() {
   return client;
 }
 
-export const CHAT_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5";
+export const CHAT_MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";

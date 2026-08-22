@@ -95,6 +95,14 @@ export default async function HomePage() {
           <span className="text-lg">💬</span>
           <span className="text-sm font-medium">Conversar com a Nina</span>
         </Link>
+        <Link href="/agenda" className="card flex flex-col gap-1.5 p-4">
+          <span className="text-lg">📅</span>
+          <span className="text-sm font-medium">Agenda</span>
+        </Link>
+        <Link href="/habits" className="card flex flex-col gap-1.5 p-4">
+          <span className="text-lg">✅</span>
+          <span className="text-sm font-medium">Hábitos</span>
+        </Link>
       </div>
 
       <section>
