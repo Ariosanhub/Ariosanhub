@@ -24,7 +24,12 @@ const PORT = Number(process.env.PORT || 3000);
 const MODEL = process.env.FLUENTA_MODEL || "claude-opus-5-5";
 const DEMO = !process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN;
 
-const client = DEMO ? null : new Anthropic();
+// Chave com escopo de Organização precisa dizer em qual workspace rodar (ANTHROPIC_WORKSPACE_ID=wrkspc_...).
+const client = DEMO
+  ? null
+  : new Anthropic(process.env.ANTHROPIC_WORKSPACE_ID
+    ? { defaultHeaders: { "anthropic-workspace-id": process.env.ANTHROPIC_WORKSPACE_ID } }
+    : {});
 
 // ---------- Schemas de saída estruturada ----------
 
@@ -99,7 +104,8 @@ const REVIEW_SCHEMA = strictObject({
 // ---------- Chamada ao Claude ----------
 
 async function askClaude({ system, messages, schema, effort, maxTokens = 16000 }) {
-  const response = await client.beta.messages.create({
+  // Streaming: o plano é uma resposta longa e o SDK exige stream nesses casos.
+  const response = await client.beta.messages.stream({
     model: MODEL,
     max_tokens: maxTokens,
     // Se o classificador de segurança recusar, a API refaz no modelo recomendado.
@@ -108,7 +114,7 @@ async function askClaude({ system, messages, schema, effort, maxTokens = 16000 }
     output_config: { effort, format: { type: "json_schema", schema } },
     system,
     messages,
-  });
+  }).finalMessage();
 
   if (response.stop_reason === "refusal") {
     throw Object.assign(new Error("O tutor não pôde responder a esta mensagem."), { status: 422 });
