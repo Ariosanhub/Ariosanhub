@@ -349,7 +349,9 @@ const server = http.createServer(async (req, res) => {
     let status = err.status || 500;
     let message = err.message || "Erro interno";
     if (err instanceof Anthropic.RateLimitError) message = "Muitos acessos agora, tente em alguns segundos.";
-    else if (err instanceof Anthropic.AuthenticationError) message = "Chave da API inválida no servidor.";
+    else if (err instanceof Anthropic.AuthenticationError) message = "Chave da API inválida: confira o ANTHROPIC_API_KEY no arquivo .env.";
+    else if (err instanceof Anthropic.PermissionDeniedError) message = "Esta chave não tem permissão para a API. Crie uma chave nova no Console da Anthropic.";
+    else if (err instanceof Anthropic.BadRequestError && /credit balance/i.test(err.message)) message = "Sua conta da Anthropic está sem crédito. Adicione fundos em console.anthropic.com > Faturamento.";
     else if (err instanceof Anthropic.APIConnectionError) { status = 503; message = "Sem conexão com a IA."; }
     else if (err instanceof SyntaxError) { status = 400; message = "JSON inválido."; }
     console.error(`[${pathname}]`, err);
@@ -359,5 +361,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Fluenta rodando em http://localhost:${PORT}${DEMO ? "  (MODO DEMO — defina ANTHROPIC_API_KEY para usar a IA)" : ""}`);
+  console.log(`Fluenta rodando em http://localhost:${PORT}`);
+  const key = process.env.ANTHROPIC_API_KEY || "";
+  if (DEMO) console.log("MODO DEMO: nenhuma chave encontrada. Crie o arquivo .env com ANTHROPIC_API_KEY=sk-ant-...");
+  else if (key && !key.startsWith("sk-ant-")) console.log(`ATENÇÃO: a chave carregada não parece válida (começa com "${key.slice(0, 6)}"). Ela deve começar com sk-ant-`);
+  else if (key) console.log(`Chave carregada: ${key.slice(0, 10)}...${key.slice(-4)}`);
 });
