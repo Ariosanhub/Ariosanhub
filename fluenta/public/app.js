@@ -8,14 +8,14 @@
 //   #/app/words       caderno de vocabulário
 // MVP: dados do aluno ficam no localStorage. Próximo passo: Supabase (auth + banco).
 
-import { pict, icon, logo } from "/icons.js";
+import { pict, icon, logo, streakFlame } from "/icons.js";
 
 // ---------- Estado ----------
 
 const STORE_KEY = "fluenta:v1";
 const emptyState = () => ({
   profile: null, plan: null, startDate: null,
-  progress: {}, chats: {}, corrections: [], vocab: [], reviews: {},
+  progress: {}, chats: {}, corrections: [], vocab: [], reviews: {}, settings: {},
 });
 
 function load() {
@@ -409,6 +409,7 @@ async function generatePlan() {
     <div class="loading-tiles"><span class="bg-mint"></span><span class="bg-cream"></span><span class="bg-sky"></span><span class="bg-plum"></span><span class="bg-salmon"></span></div>
     <h2>Montando seu plano...</h2>
     <p class="muted" id="load-msg">Analisando seu nível e sua rotina</p>
+    <p class="muted" style="font-size:13px">Leva cerca de 30 segundos. Não feche a página.</p>
   </div></main>`;
   const msgs = ["Analisando seu nível e sua rotina", "Criando cenários com o seu trabalho", "Encaixando as aulas nos seus horários", "Preparando sua primeira conversa"];
   let i = 0;
@@ -466,7 +467,7 @@ function renderToday() {
     </div>
 
     <div class="stats">
-      <div class="stat"><div class="num">${streak()} 🔥</div><div class="lbl">dias seguidos</div></div>
+      <div class="stat streak-stat"><div class="num">${streak()} ${streakFlame(streak() > 0)}</div><div class="lbl">dias seguidos</div></div>
       <div class="stat"><div class="num">${totalMin}</div><div class="lbl">minutos praticados</div></div>
       <div class="stat"><div class="num">${state.vocab.length}</div><div class="lbl">palavras novas</div></div>
       <div class="stat"><div class="num">${state.corrections.length}</div><div class="lbl">erros corrigidos</div></div>
@@ -500,7 +501,7 @@ function renderToday() {
       <div class="card"><div class="eyebrow">Sua estratégia</div><p style="margin-top:6px">${esc(plan.summary)}</p></div>
     </div>`);
 
-  $("#mark")?.addEventListener("click", () => { markDone(day?.minutes || 0); toast("Boa! Dia concluído 🔥"); renderToday(); });
+  $("#mark")?.addEventListener("click", () => { markDone(day?.minutes || 0); toast("Dia concluído. Sua chama da conversa cresceu!"); renderToday(); });
 }
 
 function renderPlan() {
@@ -549,13 +550,17 @@ function datesForWeek(start, i) {
 // ---------- Conversa com o tutor ----------
 
 let recognition = null;
+let listening = false; // microfone ligado até o aluno tocar de novo
+
+const DEFAULT_RATE = () => (["A1", "A2"].includes(state.plan?.level) ? 0.7 : 0.9);
+const voiceRate = () => state.settings?.rate ?? DEFAULT_RATE();
 
 function speak(text) {
   if (!("speechSynthesis" in window)) return toast("Seu navegador não tem leitura em voz alta.");
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text.replace(/^\[demo\]\s*/, ""));
   u.lang = SPEECH_LANG[state.profile.targetLanguage] || "en-US";
-  u.rate = ["A1", "A2"].includes(state.plan.level) ? 0.85 : 1;
+  u.rate = voiceRate();
   speechSynthesis.speak(u);
 }
 
@@ -577,7 +582,7 @@ function renderChat() {
   const scenario = day?.type === "review" ? "Conversa livre sobre a semana" : day?.scenario || "Conversa livre sobre o seu dia";
   state.chats[today] ||= [];
   const history = state.chats[today];
-  const userCount = history.filter((m) => m.role === "user").length;
+  const userCount = history.filter((m) => m.role === "user" && !m.hidden).length;
   const goal = 6;
   const hasSpeech = "webkitSpeechRecognition" in window || "SpeechRecognition" in window;
 
@@ -586,13 +591,21 @@ function renderChat() {
       <div class="chat-head">
         <div><div class="eyebrow">Tutor de conversação · ${userCount}/${goal} mensagens hoje</div>
           <div class="scenario" style="margin-top:8px">🎬 ${esc(scenario)}</div></div>
-        ${history.length ? "" : `<button class="btn sm" id="start-chat">Tutor, comece!</button>`}
+        <div class="chat-actions">
+          <label class="speed" title="Velocidade da voz do tutor">
+            <span>${icon.speaker}</span>
+            <input type="range" id="rate" min="0.3" max="1" step="0.05" value="${voiceRate()}" aria-label="Velocidade da voz" />
+            <b id="rate-val">${voiceRate().toFixed(2)}x</b>
+          </label>
+          ${history.length ? "" : `<button class="btn sm" id="start-chat">Tutor, comece!</button>`}
+        </div>
       </div>
       <div class="messages" id="messages" aria-live="polite">
         ${history.length ? history.map(msgHtml).join("") : `
           <div class="empty">${pict.talk}<h3>Pronto para falar?</h3>
           <p class="muted">Escreva ou grave sua voz no idioma que está aprendendo. Errar faz parte — o tutor corrige com carinho.</p></div>`}
       </div>
+      <div class="mic-hint" id="mic-hint" hidden>Gravando, fale no seu ritmo. As pausas não enviam nada. Toque no microfone para parar, revise o texto e envie.</div>
       <form class="composer" id="composer">
         ${hasSpeech ? `<button type="button" class="icon-btn" id="mic" title="Falar">${icon.mic}<span class="sr-only">Falar</span></button>` : ""}
         <textarea class="input" id="text" rows="1" placeholder="Escreva sua resposta..." aria-label="Mensagem"></textarea>
@@ -622,25 +635,67 @@ function renderChat() {
     if (text) send(text);
   });
 
-  $("#mic")?.addEventListener("click", () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (recognition) { recognition.stop(); return; }
-    recognition = new SR();
-    recognition.lang = SPEECH_LANG[state.profile.targetLanguage] || "en-US";
-    recognition.interimResults = true;
-    const mic = $("#mic");
-    mic.classList.add("active");
-    recognition.onresult = (ev) => { ta.value = Array.from(ev.results).map((r) => r[0].transcript).join(" "); };
-    recognition.onend = () => {
-      mic.classList.remove("active");
-      recognition = null;
-      if (ta.value.trim()) $("#composer").requestSubmit();
-    };
-    recognition.onerror = () => toast("Não consegui ouvir. Verifique a permissão do microfone.");
-    recognition.start();
+  const rate = $("#rate");
+  rate.addEventListener("input", () => { $("#rate-val").textContent = Number(rate.value).toFixed(2) + "x"; });
+  rate.addEventListener("change", () => {
+    state.settings = { ...state.settings, rate: Number(rate.value) };
+    save();
+    const last = [...history].reverse().find((m) => m.role === "assistant");
+    speak(last?.content || "This is how fast I will speak.");
   });
 
+  // Microfone: liga com um toque e só desliga com outro toque. Pausas para pensar não enviam nada;
+  // o texto fica na caixa para o aluno revisar e enviar quando quiser.
+  $("#mic")?.addEventListener("click", () => {
+    if (listening) { stopListening(); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const mic = $("#mic");
+    let spoken = ta.value.trim() ? ta.value.trim() + " " : "";
+    listening = true;
+    mic.classList.add("active");
+    $("#mic-hint").hidden = false;
+    speechSynthesis?.cancel();
+
+    const startSession = () => {
+      recognition = new SR();
+      recognition.lang = SPEECH_LANG[state.profile.targetLanguage] || "en-US";
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.onresult = (ev) => {
+        let interim = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const r = ev.results[i];
+          if (r.isFinal) spoken += r[0].transcript.trim() + " ";
+          else interim += r[0].transcript;
+        }
+        ta.value = (spoken + interim).trimStart();
+        ta.dispatchEvent(new Event("input"));
+      };
+      // O navegador encerra a sessão após um silêncio longo; se o aluno não pediu para parar, religa.
+      recognition.onend = () => { if (listening) startSession(); };
+      recognition.onerror = (e) => {
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          toast("Permita o uso do microfone no navegador.");
+          stopListening();
+        }
+      };
+      recognition.start();
+    };
+    startSession();
+  });
+
+  function stopListening() {
+    listening = false;
+    recognition?.stop();
+    recognition = null;
+    $("#mic")?.classList.remove("active");
+    const hint = $("#mic-hint");
+    if (hint) hint.hidden = true;
+    ta.focus();
+  }
+
   async function send(text, hidden = false) {
+    if (listening) stopListening();
     const msg = { role: "user", content: text, hidden };
     history.push(msg);
     save();
@@ -665,7 +720,7 @@ function renderChat() {
       const sent = history.filter((m) => m.role === "user" && !m.hidden).length;
       const minutes = Math.round(sent * 1.5);
       state.progress[today] = { ...(state.progress[today] || {}), minutes };
-      if (sent === goal && !state.progress[today].done) { markDone(minutes); toast("Meta de conversa do dia batida! 🔥"); }
+      if (sent === goal && !state.progress[today].done) { markDone(minutes); toast("Meta do dia batida. Sua chama da conversa cresceu!"); }
       save();
       renderChat();
       if (state.profile.style === "Falando (voz)") speak(out.reply);
@@ -811,7 +866,8 @@ function renderWords() {
 
 function route() {
   const h = location.hash || "#/";
-  if (recognition) recognition.stop();
+  listening = false;
+  if (recognition) { recognition.stop(); recognition = null; }
   renderTopbar();
   window.scrollTo(0, 0);
 

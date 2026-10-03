@@ -260,7 +260,7 @@ footer.site { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size
 .legend i { width: 14px; height: 14px; border-radius: 4px; display: inline-block; border: 1px solid var(--line); }
 
 /* Chat */
-.chat-wrap { display: grid; grid-template-rows: auto 1fr auto; height: calc(100vh - 64px - 56px); min-height: 480px; }
+.chat-wrap { display: grid; grid-template-rows: auto 1fr auto auto; height: calc(100vh - 64px - 56px); min-height: 480px; }
 @media (max-width: 860px) { .chat-wrap { height: calc(100vh - 64px - 40px - 76px); } }
 .chat-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding-bottom: 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .scenario { font-size: 14px; background: var(--sky); padding: 8px 12px; border-radius: 12px; }
@@ -310,3 +310,25 @@ footer.site { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size
   .demo-badge { font-size: 9px; padding: 2px 6px; }
   .logo span { display: none; }
 }
+
+/* Chama da conversa (streak) */
+.streak-stat .num { display: flex; align-items: center; gap: 8px; }
+.streak-flame { width: 32px; height: 37px; }
+.streak-flame.on { animation: flicker 2.4s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes flicker { 0%, 100% { transform: scale(1) rotate(0); } 40% { transform: scale(1.06, 1.1) rotate(-2deg); } 70% { transform: scale(.98, 1.03) rotate(1.5deg); } }
+@media (prefers-reduced-motion: reduce) { .streak-flame.on { animation: none; } }
+
+/* Velocidade da voz */
+.chat-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.speed {
+  display: inline-flex; align-items: center; gap: 8px; background: var(--white); border: 1px solid var(--line);
+  border-radius: 999px; padding: 6px 12px; font-size: 13px;
+}
+.speed svg { width: 18px; height: 18px; }
+.speed input { width: 110px; accent-color: var(--plum); }
+.speed b { font-weight: 600; min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Microfone gravando */
+.mic-hint { font-size: 13px; background: var(--salmon); border-radius: 12px; padding: 8px 12px; margin-top: 8px; }
+.icon-btn.active { animation: pulse-ring 1.4s ease-out infinite; }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(250, 185, 168, .9); } 100% { box-shadow: 0 0 0 12px rgba(250, 185, 168, 0); } }

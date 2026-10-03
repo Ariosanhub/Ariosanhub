@@ -22,6 +22,8 @@ try {
 const PUBLIC_DIR = path.join(here, "public");
 const PORT = Number(process.env.PORT || 3000);
 const MODEL = process.env.FLUENTA_MODEL || "claude-opus-5-5";
+// Opcional: modelo só para o chat (ex.: claude-sonnet-5-5 responde mais rápido). Padrão: o mesmo MODEL.
+const CHAT_MODEL = process.env.FLUENTA_CHAT_MODEL || MODEL;
 const DEMO = !process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN;
 
 // Chave com escopo de Organização precisa dizer em qual workspace rodar (ANTHROPIC_WORKSPACE_ID=wrkspc_...).
@@ -103,10 +105,10 @@ const REVIEW_SCHEMA = strictObject({
 
 // ---------- Chamada ao Claude ----------
 
-async function askClaude({ system, messages, schema, effort, maxTokens = 16000 }) {
+async function askClaude({ system, messages, schema, effort, maxTokens = 16000, model = MODEL }) {
   // Streaming: o plano é uma resposta longa e o SDK exige stream nesses casos.
   const response = await client.beta.messages.stream({
-    model: MODEL,
+    model,
     max_tokens: maxTokens,
     // Se o classificador de segurança recusar, a API refaz no modelo recomendado.
     betas: ["server-side-fallback-2026-07-01"],
@@ -149,7 +151,8 @@ Princípios: fluência vem de falar todos os dias; todo conteúdo deve sair da v
 blocos curtos que cabem nos minutos disponíveis; domingo é sempre aula de revisão da semana.
 Monte um plano de 4 semanas (a pessoa renova o plano depois). Cada dia útil tem uma tarefa de conversa com o tutor de IA.
 Os "scenarios" devem ser situações concretas da rotina descrita (ex.: reunião com fornecedor, pedir café antes do trabalho).
-Escreva títulos, tarefas e o resumo no idioma nativo do aluno; os cenários podem mencionar frases no idioma-alvo.`;
+Escreva títulos, tarefas e o resumo no idioma nativo do aluno; os cenários podem mencionar frases no idioma-alvo.
+Seja conciso: títulos curtos, no máximo 3 tarefas por dia (uma linha cada), cenário em uma frase, resumo em até 3 frases.`;
 
 function chatSystem(p, scenario) {
   return `Você é o tutor de conversação da Fluenta. Converse SEMPRE no idioma-alvo (${p.targetLanguage}), ajustado ao nível ${p.level || p.selfLevel}.
@@ -277,7 +280,7 @@ const routes = {
       system: PLAN_SYSTEM,
       messages: [{ role: "user", content: `Monte o plano para este aluno:\n${profileBlock(p)}` }],
       schema: PLAN_SCHEMA,
-      effort: "medium",
+      effort: "low", // plano é estruturado e direto: low corta bastante o tempo de espera
       maxTokens: 32000,
     });
   },
@@ -291,6 +294,7 @@ const routes = {
       messages,
       schema: CHAT_SCHEMA,
       effort: "low", // conversa precisa ser rápida
+      model: CHAT_MODEL,
       maxTokens: 4000,
     });
   },
@@ -348,7 +352,9 @@ const server = http.createServer(async (req, res) => {
 
   try {
     const body = req.method === "POST" ? await readJson(req) : {};
+    const started = Date.now();
     const result = await handler(body);
+    if (req.method === "POST") console.log(`[${pathname}] ${((Date.now() - started) / 1000).toFixed(1)}s`);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
   } catch (err) {

@@ -81,3 +81,17 @@ export const logo = `<svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="tru
   <path d="M8 9h13a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-6l-5 4v-4H8a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3z" fill="#141414"/>
   <circle cx="11" cy="15" r="1.6" fill="#fab9a8"/><circle cx="15" cy="15" r="1.6" fill="#fab9a8"/><circle cx="19" cy="15" r="1.6" fill="#fab9a8"/>
 </svg>`;
+
+// Chama da conversa (streak): chama em camadas nas cores da marca com um balão de fala no centro.
+// Acesa quando a sequência está ativa; apagada (tons de ameixa) quando zerada.
+export function streakFlame(active = true) {
+  const outer = active ? "#fab9a8" : "#e4dbe3";
+  const inner = active ? "#fce8b6" : "#f4f0f3";
+  const ink = active ? "#141414" : "#8a7a89";
+  return `<svg class="streak-flame ${active ? "on" : "off"}" viewBox="0 0 48 56" aria-hidden="true">
+    <path d="M24 2c3 9 15 15 15 30a15 15 0 0 1-30 0c0-7 3-11 6-15 1 5 3 8 6 8-1-9 0-16 3-23z" fill="${outer}" stroke="${ink}" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="M24 22c2 5 8 8 8 15a8 8 0 0 1-16 0c0-4 2-6 4-8 0 2 1 4 3 4-1-4 0-7 1-11z" fill="${inner}"/>
+    <path d="M16.5 33h15a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-2.5 2.5H23l-4 3.5V43h-2.5a2.5 2.5 0 0 1-2.5-2.5v-5a2.5 2.5 0 0 1 2.5-2.5z" fill="${ink}"/>
+    <circle cx="19.5" cy="38" r="1.3" fill="${outer}"/><circle cx="24" cy="38" r="1.3" fill="${outer}"/><circle cx="28.5" cy="38" r="1.3" fill="${outer}"/>
+  </svg>`;
+}

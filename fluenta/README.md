@@ -40,7 +40,14 @@ npm start      # abra http://localhost:3000
 
 Sem o `.env`, o app roda em **modo demo** com respostas simuladas. O `.env` está no `.gitignore` e nunca vai para o GitHub.
 
-Variáveis opcionais: `PORT` (padrão 3000) e `FLUENTA_MODEL` (padrão `claude-opus-5-5`).
+Variáveis opcionais no `.env`:
+
+| Variável | Para quê |
+|---|---|
+| `ANTHROPIC_WORKSPACE_ID` | Obrigatória se a chave tiver escopo de **Organização** (`sk-ant-usr-...`). Use o ID `wrkspc_...` do workspace |
+| `FLUENTA_MODEL` | Modelo geral (padrão `claude-opus-5-5`) |
+| `FLUENTA_CHAT_MODEL` | Modelo só do tutor, por exemplo `claude-sonnet-5-5` para respostas mais rápidas (padrão: o mesmo do `FLUENTA_MODEL`) |
+| `PORT` | Porta do servidor (padrão 3000) |
 
 ## Arquitetura
 
