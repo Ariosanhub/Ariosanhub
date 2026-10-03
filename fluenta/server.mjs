@@ -12,6 +12,13 @@ import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// Carrega fluenta/.env (ANTHROPIC_API_KEY=...) se existir — funciona igual no Windows, Mac e Linux.
+try {
+  process.loadEnvFile(path.join(here, ".env"));
+} catch {
+  // sem .env: usa as variáveis do sistema ou roda em modo demo
+}
 const PUBLIC_DIR = path.join(here, "public");
 const PORT = Number(process.env.PORT || 3000);
 const MODEL = process.env.FLUENTA_MODEL || "claude-opus-5-5";

@@ -16,12 +16,29 @@ Você responde um questionário, a IA entende seu nível, seu trabalho e sua rot
 
 ## Rodar localmente
 
+Pré-requisito: [Node.js 20.12+](https://nodejs.org) (versão LTS).
+
 ```bash
+git clone https://github.com/Ariosanhub/Ariosanhub.git
+cd Ariosanhub
+git checkout fluenta-mvp
 cd fluenta
 npm install
-export ANTHROPIC_API_KEY=sk-ant-...   # sem a chave, roda em MODO DEMO com respostas simuladas
-npm start                             # http://localhost:3000
 ```
+
+Crie o arquivo `fluenta/.env` (copie de `.env.example`) com a sua chave:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Depois:
+
+```bash
+npm start      # abra http://localhost:3000
+```
+
+Sem o `.env`, o app roda em **modo demo** com respostas simuladas. O `.env` está no `.gitignore` e nunca vai para o GitHub.
 
 Variáveis opcionais: `PORT` (padrão 3000) e `FLUENTA_MODEL` (padrão `claude-opus-5-5`).
 
