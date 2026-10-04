@@ -446,6 +446,75 @@ function shell(active, content) {
   </div>`;
 }
 
+// ---------- Agenda (lembrete diário pelo calendário do aluno) ----------
+
+// Horário sugerido a partir da rotina informada no questionário; o aluno pode ajustar.
+function studyAt() {
+  if (state.settings?.studyAt) return state.settings.studyAt;
+  const p = state.profile;
+  const [h, m] = (p.wakeTime || "06:30").split(":").map(Number);
+  const plus = (mins) => {
+    const t = h * 60 + m + mins;
+    return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+  };
+  return {
+    "Manhã, antes do trabalho": plus(30),
+    "Hora do almoço": "12:15",
+    "No trajeto / transporte": plus(60),
+    "Noite, depois do trabalho": "19:30",
+    "Antes de dormir": "21:45",
+  }[p.studyTime] || plus(30);
+}
+
+function nextStart() {
+  const [h, m] = studyAt().split(":").map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  if (d < new Date()) d.setDate(d.getDate() + 1);
+  return d;
+}
+const calStamp = (d) => `${iso(d).replace(/-/g, "")}T${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}00`;
+const calTitle = () => `Fluenta: ${state.plan.dailyMinutes} min de ${LANGS.find((l) => l.id === state.profile.targetLanguage)?.label || "idioma"}`;
+const calDetails = () => `Sua prática diária com o tutor de IA. Abra: ${location.origin}/#/app`;
+
+function googleCalendarUrl() {
+  const start = nextStart();
+  const end = new Date(start.getTime() + state.plan.dailyMinutes * 60000);
+  const q = new URLSearchParams({
+    action: "TEMPLATE",
+    text: calTitle(),
+    details: calDetails(),
+    dates: `${calStamp(start)}/${calStamp(end)}`,
+    ctz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    recur: "RRULE:FREQ=DAILY",
+  });
+  return `https://calendar.google.com/calendar/render?${q}`;
+}
+
+function downloadIcs() {
+  const start = nextStart();
+  const end = new Date(start.getTime() + state.plan.dailyMinutes * 60000);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const ics = [
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Fluenta//Study//PT", "CALSCALE:GREGORIAN",
+    "BEGIN:VEVENT",
+    `UID:fluenta-${Date.now()}@fluenta`,
+    `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}Z`,
+    `DTSTART;TZID=${tz}:${calStamp(start)}`,
+    `DTEND;TZID=${tz}:${calStamp(end)}`,
+    "RRULE:FREQ=DAILY",
+    `SUMMARY:${calTitle()}`,
+    `DESCRIPTION:${calDetails()}`,
+    "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Hora do seu inglês", "TRIGGER:-PT5M", "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR",
+  ].join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+  a.download = "fluenta-estudo.ics";
+  a.click();
+  toast("Abra o arquivo para adicionar à agenda (lembrete 5 min antes).");
+}
+
 function renderToday() {
   const { profile, plan } = state;
   const wi = currentWeekIndex();
@@ -496,11 +565,35 @@ function renderToday() {
       }).join("")}
     </div>
 
+    <section class="card commit">
+      <div class="commit-head">
+        ${pict.calendar}
+        <div>
+          <div class="eyebrow">Seu compromisso de estudo</div>
+          <h3 style="margin:4px 0 2px">Todos os dias, ${plan.dailyMinutes} minutos</h3>
+          <p class="muted" style="font-size:14px">Coloque na sua agenda: o celular te lembra na hora certa, mesmo com o app fechado.</p>
+        </div>
+      </div>
+      <div class="commit-row">
+        <label class="field" style="margin:0"><span style="font-size:13px;font-weight:600">Horário</span>
+          <input class="input" type="time" id="study-at" value="${studyAt()}" style="width:130px" /></label>
+        <a class="btn sm" id="gcal" target="_blank" rel="noopener" href="${googleCalendarUrl()}">Adicionar ao Google Agenda</a>
+        <button class="btn ghost sm" id="ics">Apple / Outlook (.ics)</button>
+      </div>
+    </section>
+
     <div class="grid-2">
       <div class="card"><div class="eyebrow">Tema da semana</div><h3 style="margin:6px 0">${esc(week.theme)}</h3><p class="muted">${esc(week.goal)}</p></div>
       <div class="card"><div class="eyebrow">Sua estratégia</div><p style="margin-top:6px">${esc(plan.summary)}</p></div>
     </div>`);
 
+  $("#study-at").addEventListener("change", (e) => {
+    state.settings = { ...state.settings, studyAt: e.target.value };
+    save();
+    $("#gcal").href = googleCalendarUrl();
+  });
+  $("#gcal").addEventListener("click", () => toast("Confirme o evento no Google Agenda e ative a notificação."));
+  $("#ics").addEventListener("click", downloadIcs);
   $("#mark")?.addEventListener("click", () => { markDone(day?.minutes || 0); toast("Dia concluído. Sua chama da conversa cresceu!"); renderToday(); });
 }
 
@@ -551,6 +644,9 @@ function datesForWeek(start, i) {
 
 let recognition = null;
 let listening = false; // microfone ligado até o aluno tocar de novo
+let recorder = null; // grava a voz do aluno para ele se ouvir depois
+let pendingAudio = null; // URL do último áudio gravado, ainda não enviado
+const myAudio = new Map(); // id da mensagem -> URL do áudio (só nesta sessão do navegador; não salvamos áudio)
 
 const DEFAULT_RATE = () => (["A1", "A2"].includes(state.plan?.level) ? 0.7 : 0.9);
 const voiceRate = () => state.settings?.rate ?? DEFAULT_RATE();
@@ -566,12 +662,25 @@ function speak(text) {
 
 function msgHtml(m, i) {
   if (m.role === "user" && m.hidden) return "";
-  if (m.role === "user") return `<div class="msg me"><div class="bubble me">${esc(m.content)}</div></div>`;
+  if (m.role === "user") {
+    const audio = m.id && myAudio.get(m.id);
+    return `<div class="msg me">
+      <div class="bubble me">${esc(m.content)}</div>
+      ${m.translation ? `<div class="tr" hidden id="tr-${i}">${esc(m.translation)}</div>` : ""}
+      <div class="tools">
+        ${audio ? `<button data-mine="${i}">▶ minha voz</button>` : ""}
+        <button data-speak="${i}">🔊 ouvir pronúncia</button>
+        ${m.translation ? `<button data-tr="${i}">traduzir</button>` : ""}
+      </div>
+    </div>`;
+  }
   return `<div class="msg ai">
     <div class="bubble ai">${esc(m.content)}</div>
     ${m.translation ? `<div class="tr" hidden id="tr-${i}">${esc(m.translation)}</div>` : ""}
     <div class="tools"><button data-speak="${i}">🔊 ouvir</button>${m.translation ? `<button data-tr="${i}">traduzir</button>` : ""}</div>
-    ${(m.corrections || []).map((c) => `<div class="corr"><span><s>${esc(c.original)}</s> → <b>${esc(c.corrected)}</b></span><span class="muted">${esc(c.explanation)}</span></div>`).join("")}
+    ${(m.corrections || []).map((c, j) => `<div class="corr"><span><s>${esc(c.original)}</s> → <b>${esc(c.corrected)}</b>
+      <button class="say-btn" data-corr="${i}:${j}" title="Ouvir a frase correta para repetir">🔊 repetir</button></span>
+      <span class="muted">${esc(c.explanation)}</span></div>`).join("")}
     ${m.newVocab?.length ? `<div>${m.newVocab.map((v) => `<span class="vocab-pill"><b>${esc(v.term)}</b> · ${esc(v.meaning)}</span>`).join("")}</div>` : ""}
   </div>`;
 }
@@ -619,12 +728,23 @@ function renderChat() {
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); }
   });
-  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; });
+  ta.addEventListener("input", () => {
+    ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
+    if (!ta.value.trim() && !listening) pendingAudio = null;
+  });
 
   box.addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
     if (b.dataset.speak) speak(history[Number(b.dataset.speak)].content);
+    if (b.dataset.mine) {
+      const url = myAudio.get(history[Number(b.dataset.mine)].id);
+      if (url) { speechSynthesis?.cancel(); new Audio(url).play(); }
+    }
+    if (b.dataset.corr) {
+      const [mi, ci] = b.dataset.corr.split(":").map(Number);
+      speak(history[mi].corrections[ci].corrected);
+    }
     if (b.dataset.tr) $(`#tr-${b.dataset.tr}`).hidden ^= true;
   });
 
@@ -674,29 +794,59 @@ function renderChat() {
       // O navegador encerra a sessão após um silêncio longo; se o aluno não pediu para parar, religa.
       recognition.onend = () => { if (listening) startSession(); };
       recognition.onerror = (e) => {
-        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-          toast("Permita o uso do microfone no navegador.");
-          stopListening();
-        }
+        if (e.error === "no-speech" || e.error === "aborted") return; // silêncio: segue ouvindo
+        toast(e.error === "not-allowed" || e.error === "service-not-allowed"
+          ? "Permita o uso do microfone no navegador."
+          : "O ditado por voz falhou. Verifique a internet ou escreva sua resposta.");
+        stopListening();
       };
       recognition.start();
     };
     startSession();
+    startRecording();
   });
+
+  async function startRecording() {
+    if (!window.MediaRecorder || !navigator.mediaDevices) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!listening) { stream.getTracks().forEach((t) => t.stop()); return; }
+      const chunks = [];
+      recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop()); // desliga o microfone de verdade
+        if (chunks.length) {
+          if (pendingAudio) URL.revokeObjectURL(pendingAudio);
+          pendingAudio = URL.createObjectURL(new Blob(chunks, { type: recorder.mimeType }));
+        }
+        recorder._done?.();
+      };
+      recorder.start();
+    } catch {
+      recorder = null; // sem gravação: o ditado continua funcionando
+    }
+  }
 
   function stopListening() {
     listening = false;
     recognition?.stop();
     recognition = null;
+    const audioReady = new Promise((resolve) => {
+      if (recorder && recorder.state !== "inactive") { recorder._done = resolve; recorder.stop(); }
+      else resolve();
+    }).then(() => { recorder = null; });
     $("#mic")?.classList.remove("active");
     const hint = $("#mic-hint");
     if (hint) hint.hidden = true;
     ta.focus();
+    return audioReady;
   }
 
   async function send(text, hidden = false) {
-    if (listening) stopListening();
-    const msg = { role: "user", content: text, hidden };
+    if (listening) await stopListening();
+    const msg = { role: "user", content: text, hidden, id: Date.now() };
+    if (!hidden && pendingAudio) { myAudio.set(msg.id, pendingAudio); pendingAudio = null; }
     history.push(msg);
     save();
     if (!hidden) box.insertAdjacentHTML("beforeend", msgHtml(msg));
@@ -711,6 +861,7 @@ function renderChat() {
         scenario,
         history: history.map(({ role, content }) => ({ role, content })),
       });
+      if (out.userTranslation && !hidden) msg.translation = out.userTranslation;
       const reply = { role: "assistant", content: out.reply, translation: out.translation, corrections: out.corrections, newVocab: out.newVocab };
       history.push(reply);
       out.corrections?.forEach((c) => state.corrections.push({ ...c, date: today }));
@@ -726,6 +877,7 @@ function renderChat() {
       if (state.profile.style === "Falando (voz)") speak(out.reply);
     } catch (err) {
       history.pop(); // permite reenviar
+      if (myAudio.has(msg.id)) pendingAudio = myAudio.get(msg.id);
       save();
       $("#typing")?.remove();
       box.insertAdjacentHTML("beforeend", `<div class="error-box">${esc(err.message)}</div>`);
@@ -868,6 +1020,7 @@ function route() {
   const h = location.hash || "#/";
   listening = false;
   if (recognition) { recognition.stop(); recognition = null; }
+  if (recorder && recorder.state !== "inactive") recorder.stop();
   renderTopbar();
   window.scrollTo(0, 0);
 

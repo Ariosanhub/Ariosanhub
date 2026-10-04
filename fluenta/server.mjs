@@ -71,6 +71,7 @@ const PLAN_SCHEMA = strictObject({
 const CHAT_SCHEMA = strictObject({
   reply: { type: "string", description: "Resposta do tutor no idioma-alvo, adequada ao nível" },
   translation: { type: "string", description: "Tradução curta da resposta no idioma nativo do aluno" },
+  userTranslation: { type: "string", description: "Tradução da ÚLTIMA mensagem do aluno para o idioma nativo dele (como você entendeu). Vazio se ela já estiver no idioma nativo" },
   corrections: {
     type: "array",
     items: strictObject({
@@ -167,6 +168,7 @@ Regras:
 - Corrija só erros relevantes (máx. 3) em "corrections"; se não houver erros, devolva lista vazia.
 - Em "newVocab" liste até 3 palavras/expressões úteis que você usou e que o aluno provavelmente não conhece.
 - "translation" e "explanation" ficam no idioma nativo do aluno (${p.nativeLanguage}).
+- Em "userTranslation", traduza a última mensagem do aluno para ${p.nativeLanguage}, para ele conferir se o ditado por voz captou o que quis dizer.
 - Se o aluno escrever no idioma nativo, ajude-o a dizer aquilo no idioma-alvo e peça para ele repetir.`;
 }
 
@@ -232,6 +234,7 @@ function demoChat(history) {
   return {
     reply: `[demo] ${DEMO_REPLIES[turn % DEMO_REPLIES.length]}`,
     translation: "(modo demo — configure ANTHROPIC_API_KEY para conversar com a IA de verdade)",
+    userTranslation: "(modo demo) tradução da sua mensagem aparece aqui",
     corrections,
     newVocab: [{ term: turn % 2 ? "challenging" : "a normal day", meaning: turn % 2 ? "desafiador" : "um dia comum" }],
   };

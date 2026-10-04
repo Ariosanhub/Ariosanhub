@@ -332,3 +332,11 @@ footer.site { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size
 .mic-hint { font-size: 13px; background: var(--salmon); border-radius: 12px; padding: 8px 12px; margin-top: 8px; }
 .icon-btn.active { animation: pulse-ring 1.4s ease-out infinite; }
 @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(250, 185, 168, .9); } 100% { box-shadow: 0 0 0 12px rgba(250, 185, 168, 0); } }
+
+/* Compromisso de estudo / agenda */
+.commit { margin: 0 0 16px; display: grid; gap: 14px; background: var(--sky); border: 0; }
+.commit-head { display: flex; gap: 16px; align-items: center; }
+.commit-head .pict { width: 56px; height: 56px; flex: none; }
+.commit-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.say-btn { border: 0; background: transparent; cursor: pointer; font-size: 12px; color: var(--ink-soft); text-decoration: underline; margin-left: 6px; }
+.msg.me .tools { justify-content: flex-end; }
