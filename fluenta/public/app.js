@@ -28,10 +28,69 @@ function load() {
 let state = load();
 function save() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* modo privado */ }
+  schedulePush();
 }
 
+// ---------- Conta e nuvem (Supabase) ----------
+// Com Supabase configurado no servidor: login por e-mail e senha, e o estado do aluno
+// fica na tabela learner_state, protegida por RLS (cada aluno só acessa a própria linha).
+// Sem Supabase: tudo continua funcionando, salvo apenas neste navegador.
+
 let config = { demo: true };
-fetch("/api/config").then((r) => r.json()).then((c) => { config = c; renderTopbar(); }).catch(() => {});
+let sb = null; // cliente Supabase
+let session = null;
+let pushTimer = null;
+
+function schedulePush() {
+  if (!sb || !session) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushState, 800);
+}
+
+async function pushState() {
+  if (!sb || !session) return;
+  const { error } = await sb.from("learner_state").upsert({ user_id: session.user.id, data: state });
+  if (error) toast("Não consegui salvar na nuvem agora. Seus dados estão guardados neste aparelho.");
+}
+
+async function pullState() {
+  const { data, error } = await sb.from("learner_state").select("data").eq("user_id", session.user.id).maybeSingle();
+  if (error) { toast("Não consegui carregar seus dados da nuvem."); return; }
+  if (data?.data?.plan) {
+    state = { ...emptyState(), ...data.data };
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
+  } else if (state.plan) {
+    await pushState(); // primeiro login: leva para a nuvem o que já foi feito neste aparelho
+  }
+}
+
+const ready = (async () => {
+  try {
+    config = await (await fetch("/api/config")).json();
+    if (config.supabase) {
+      const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+      sb = createClient(config.supabase.url, config.supabase.key);
+      session = (await sb.auth.getSession()).data.session;
+      sb.auth.onAuthStateChange((event, s) => {
+        session = s;
+        if (event === "PASSWORD_RECOVERY") location.hash = "#/reset";
+      });
+      if (session) await pullState();
+      // links de confirmação/recuperação voltam com tokens no endereço: limpa e segue
+      if (/access_token|error_description/.test(location.hash)) {
+        history.replaceState(null, "", location.pathname + (session ? "#/app" : "#/login"));
+      }
+    }
+  } catch {
+    toast("Falha ao iniciar a conexão. Verifique a internet.");
+  }
+})();
+
+async function authHeader() {
+  if (!sb) return {};
+  const s = (await sb.auth.getSession()).data.session; // renova o token se precisar
+  return s ? { Authorization: `Bearer ${s.access_token}` } : {};
+}
 
 // ---------- Utilidades ----------
 
@@ -82,6 +141,52 @@ function markDone(minutes = 0) {
   const prev = state.progress[k] || {};
   state.progress[k] = { done: true, minutes: Math.max(prev.minutes || 0, minutes) };
   save();
+  if (!prev.done) celebrate();
+}
+
+// ---------- Celebração de dia concluído ----------
+function celebrate() {
+  const n = streak();
+  const today = iso();
+  const words = state.vocab.filter((v) => v.date === today).length;
+  const fixes = state.corrections.filter((c) => c.date === today).length;
+  const minutes = state.progress[today]?.minutes || 0;
+  const dates = weekDates();
+  const doneWeek = dates.filter((d) => state.progress[d]?.done).length;
+  const colors = ["#d5ebcb", "#fce8b6", "#cfe2f8", "#fab9a8", "#5f4c5e", "#1f2a44"];
+  const confetti = Array.from({ length: 46 }, (_, i) =>
+    `<i style="left:${(i * 37) % 100}%;background:${colors[i % colors.length]};animation-delay:${(i % 9) * 0.07}s;animation-duration:${1.6 + (i % 5) * 0.25}s;transform:rotate(${i * 23}deg)"></i>`).join("");
+  const message = n >= 7 ? "Uma semana inteira. Isso é hábito de verdade."
+    : n >= 3 ? "Três dias ou mais: seu cérebro já está criando o caminho."
+    : n === 2 ? "Dois dias seguidos. Amanhã vira sequência!"
+    : "Primeiro passo dado. O mais difícil é começar.";
+
+  const el = document.createElement("div");
+  el.className = "celebrate";
+  el.setAttribute("role", "dialog");
+  el.setAttribute("aria-label", "Dia concluído");
+  el.innerHTML = `
+    <div class="confetti" aria-hidden="true">${confetti}</div>
+    <div class="celebrate-card">
+      <div class="big-flame">${streakFlame(true)}</div>
+      <div class="eyebrow">Dia concluído</div>
+      <h2>${n} ${n === 1 ? "dia" : "dias"} de sequência</h2>
+      <p class="muted">${message}</p>
+      <div class="week-flames" aria-label="${doneWeek} de 7 dias nesta semana">
+        ${dates.map((d, i) => `<span class="${state.progress[d]?.done ? "lit" : ""}">${state.progress[d]?.done ? streakFlame(true) : ""}<small>${DAY_LABEL[WEEK_ORDER[i]]}</small></span>`).join("")}
+      </div>
+      <div class="celebrate-stats">
+        <div><b>${minutes}</b><small>minutos</small></div>
+        <div><b>${words}</b><small>palavras novas</small></div>
+        <div><b>${fixes}</b><small>erros corrigidos</small></div>
+      </div>
+      <button class="btn block" id="celebrate-ok">Continuar</button>
+    </div>`;
+  document.body.appendChild(el);
+  const close = () => el.remove();
+  el.querySelector("#celebrate-ok").addEventListener("click", close);
+  el.addEventListener("click", (e) => { if (e.target === el) close(); });
+  el.querySelector("#celebrate-ok").focus();
 }
 function toast(msg) {
   const t = document.createElement("div");
@@ -91,7 +196,11 @@ function toast(msg) {
 }
 
 async function api(path, body) {
-  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify(body),
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
   return data;
@@ -103,9 +212,19 @@ function renderTopbar() {
   $("#logo").innerHTML = `${logo}<span>Fluenta</span>`;
   const inApp = location.hash.startsWith("#/app");
   const demo = config.demo ? `<span class="demo-badge" title="Defina ANTHROPIC_API_KEY no servidor">Modo demo</span>` : "";
+  const logout = sb && session ? `<button class="btn ghost sm" id="logout" title="${esc(session.user.email)}">Sair</button>` : "";
   $("#topbar-right").innerHTML = inApp
-    ? `${demo}<button class="btn ghost sm" id="reset">Refazer perfil</button>`
-    : `${demo}${state.plan ? `<a class="btn sm" href="#/app">Minha área</a>` : `<a class="btn sm" href="#/start">Começar grátis</a>`}`;
+    ? `${demo}<button class="btn ghost sm" id="reset">Refazer perfil</button>${logout}`
+    : `${demo}${sb && !session ? `<a class="btn ghost sm" href="#/login" id="signin-link">Entrar</a>` : ""}${state.plan ? `<a class="btn sm" href="#/app">Minha área</a>` : `<a class="btn sm" href="#/start">Começar grátis</a>`}`;
+  $("#logout")?.addEventListener("click", async () => {
+    clearTimeout(pushTimer);
+    await pushState();
+    await sb.auth.signOut();
+    session = null;
+    state = emptyState();
+    try { localStorage.removeItem(STORE_KEY); } catch { /* ignore */ } // não deixa dados num computador compartilhado
+    location.hash = "#/";
+  });
   $("#reset")?.addEventListener("click", () => {
     if (confirm("Apagar seu progresso e refazer o questionário?")) {
       state = emptyState(); save(); location.hash = "#/start";
@@ -128,9 +247,9 @@ function renderLanding() {
   <main>
     <section class="container hero">
       <div>
-        <div class="eyebrow">Escola de idiomas com inteligência artificial</div>
-        <h1 style="margin-top:12px">Fale inglês de verdade, com aulas feitas para a <em>sua</em> vida.</h1>
-        <p class="lead">Você responde um questionário de 3 minutos. A Fluenta entende seu nível, seu trabalho e sua rotina — e monta um plano diário com um tutor de IA que conversa com você até a fluência.</p>
+        <div class="eyebrow">Inglês para tecnologia, dados e operações</div>
+        <h1 style="margin-top:12px">Os melhores livros, cursos e vagas de tech estão em inglês. <em>Chegou a sua vez.</em></h1>
+        <p class="lead">Em 3 minutos a Fluenta entende seu nível, seu trabalho e sua rotina. Depois, um tutor de IA conversa com você todo dia sobre o que você vive: daily com time remoto, dashboards, código, operação. Até o inglês sair natural.</p>
         <div class="cta-row">
           <a class="btn" href="#/start">Fazer meu teste grátis</a>
           <a class="btn ghost" href="#como">Como funciona</a>
@@ -138,12 +257,12 @@ function renderLanding() {
         <p class="muted" style="margin-top:14px;font-size:14px">Inglês · Espanhol · Francês · Alemão · Italiano · Português</p>
       </div>
       <div class="hero-card bg-sky" aria-label="Exemplo de conversa">
-        <div class="eyebrow" style="margin-bottom:12px">Cenário: reunião com fornecedor</div>
+        <div class="eyebrow" style="margin-bottom:12px">Cenário: daily com time remoto</div>
         <div class="stack">
-          <div class="bubble ai">Good morning! Did the trucks arrive on time today?</div>
-          <div class="bubble me">Yes, but two trucks was late because of traffic.</div>
-          <div class="fix"><s>two trucks was late</s> → <b>two trucks were late</b><br/>Plural pede "were".</div>
-          <div class="bubble ai">Got it. How did you adjust the dock schedule?</div>
+          <div class="bubble ai">Morning! What did you work on yesterday?</div>
+          <div class="bubble me">I finish the sales dashboard and fix two bug in the API.</div>
+          <div class="fix"><s>I finish… fix two bug</s> → <b>I finished… fixed two bugs</b><br/>Ontem pede passado, e "bugs" vai no plural.</div>
+          <div class="bubble ai">Nice! Which data source did you connect to the dashboard?</div>
         </div>
       </div>
     </section>
@@ -156,6 +275,19 @@ function renderLanding() {
             <div class="eyebrow">${a}</div>
             <div class="title">${b}</div>
           </div>`).join("")}
+      </div>
+    </section>
+
+    <section class="container section" id="para-quem">
+      <div class="section-head">
+        <div class="eyebrow">Para quem</div>
+        <h2>Para quem trabalha (ou quer trabalhar) com tecnologia</h2>
+        <p class="muted">A documentação, os livros de IA, as conferências e as melhores vagas remotas estão em inglês. A Fluenta treina você exatamente nesse inglês.</p>
+      </div>
+      <div class="grid-3 audience">
+        <div class="tile bg-cream">${pict.desk}<hr/><div class="eyebrow">Desenvolvimento</div><div class="title">Code review, daily e entrevista técnica</div></div>
+        <div class="tile bg-sky">${pict.book}<hr/><div class="eyebrow">Dados e IA</div><div class="title">Livros, papers e apresentar insights</div></div>
+        <div class="tile bg-mint">${pict.globe}<hr/><div class="eyebrow">Operações e logística</div><div class="title">Fornecedores, clientes e times globais</div></div>
       </div>
     </section>
 
@@ -257,7 +389,7 @@ const PLACEMENT = {
   ],
 };
 
-const INTERESTS = ["Tecnologia", "Negócios", "Viagens", "Esportes", "Música", "Séries e filmes", "Games", "Culinária", "Saúde", "Moda", "Ciência", "Livros"];
+const INTERESTS = ["IA e programação", "Dados e BI", "Tecnologia", "Negócios", "Viagens", "Esportes", "Música", "Séries e filmes", "Games", "Culinária", "Saúde", "Moda", "Ciência", "Livros"];
 
 let onb = { step: 0, a: { interests: [], placement: [], dailyMinutes: "20", nativeLanguage: "Portuguese", wakeTime: "06:30", studyTime: "Manhã, antes do trabalho" } };
 
@@ -302,8 +434,8 @@ const STEPS = [
     title: "Por que você quer ficar fluente?",
     sub: "Isso muda o vocabulário e as situações das suas aulas.",
     render: (a) => `<div class="choices">${[
-      ["Carreira e trabalho", "💼"], ["Viajar sem depender de ninguém", "✈️"], ["Morar fora", "🏡"],
-      ["Entrevistas de emprego", "🎯"], ["Estudos e certificações", "🎓"], ["Cultura, séries e amigos", "🎬"],
+      ["Vaga internacional ou remota", "🌎"], ["Ler livros, cursos e documentação técnica", "📚"], ["Reuniões e dailies em inglês", "💼"],
+      ["Entrevistas de emprego", "🎯"], ["Viajar sem depender de ninguém", "✈️"], ["Cultura, séries e amigos", "🎬"],
     ].map(([v, e]) => choice("goal", v, `<span class="flag">${e}</span>${v}`, a.goal === v)).join("")}</div>`,
     ok: (a) => a.goal,
   },
@@ -312,7 +444,7 @@ const STEPS = [
     sub: "O tutor vai usar isso para criar conversas que parecem o seu dia.",
     render: (a) => `
       <div class="field"><label for="occ">O que você faz? (profissão ou ocupação)</label>
-        <input class="input" id="occ" data-field="occupation" placeholder="Ex.: coordenador de logística" value="${esc(a.occupation || "")}" /></div>
+        <input class="input" id="occ" data-field="occupation" placeholder="Ex.: dev front-end, analista de dados, coordenador de logística" value="${esc(a.occupation || "")}" /></div>
       <div class="field"><label>Do que você gosta? (escolha até 5)</label>
         <div class="chips">${INTERESTS.map((i) => `<button type="button" class="chip ${a.interests.includes(i) ? "selected" : ""}" data-multi="interests" data-value="${i}">${i}</button>`).join("")}</div></div>`,
     ok: (a) => (a.occupation || "").trim().length > 1,
@@ -400,6 +532,12 @@ function renderOnboarding() {
 }
 
 async function generatePlan() {
+  if (sb && !session) {
+    // guarda as respostas e pede a conta antes de gastar IA; depois do login o plano é gerado
+    try { sessionStorage.setItem("fluenta:pendingOnb", JSON.stringify(onb.a)); } catch { /* ignore */ }
+    location.hash = "#/login";
+    return;
+  }
   const a = onb.a;
   const test = PLACEMENT[a.targetLanguage] || [];
   const score = test.reduce((n, [, , right], i) => n + (a.placement[i] === right ? 1 : 0), 0);
@@ -561,7 +699,7 @@ function renderToday() {
         const s = TYPE_STYLE[d?.type] || TYPE_STYLE.rest;
         const done = state.progress[dates[i]]?.done;
         return `<div class="wday ${s.bg} ${done ? "done" : ""} ${k === todayKey() ? "today-mark" : ""}" style="${s.dark ? "color:#fff" : ""}" title="${esc(d?.title || "")}">
-          <span>${DAY_LABEL[k]}</span><b>${dates[i].slice(8)}</b><span class="dot"></span></div>`;
+          <span>${DAY_LABEL[k]}</span><b>${dates[i].slice(8)}</b>${done ? `<span class="stamp">${streakFlame(true)}</span>` : `<span class="dot"></span>`}</div>`;
       }).join("")}
     </div>
 
@@ -594,7 +732,7 @@ function renderToday() {
   });
   $("#gcal").addEventListener("click", () => toast("Confirme o evento no Google Agenda e ative a notificação."));
   $("#ics").addEventListener("click", downloadIcs);
-  $("#mark")?.addEventListener("click", () => { markDone(day?.minutes || 0); toast("Dia concluído. Sua chama da conversa cresceu!"); renderToday(); });
+  $("#mark")?.addEventListener("click", () => { markDone(day?.minutes || 0); renderToday(); });
 }
 
 function renderPlan() {
@@ -871,7 +1009,7 @@ function renderChat() {
       const sent = history.filter((m) => m.role === "user" && !m.hidden).length;
       const minutes = Math.round(sent * 1.5);
       state.progress[today] = { ...(state.progress[today] || {}), minutes };
-      if (sent === goal && !state.progress[today].done) { markDone(minutes); toast("Meta do dia batida. Sua chama da conversa cresceu!"); }
+      if (sent === goal && !state.progress[today].done) markDone(minutes);
       save();
       renderChat();
       if (state.profile.style === "Falando (voz)") speak(out.reply);
@@ -929,6 +1067,7 @@ function renderReview() {
     </section>
     ${past ? `<div class="card" style="margin-top:16px"><div class="eyebrow">Último resultado</div>
       <p style="margin-top:6px"><span class="serif" style="font-size:28px">${past.score}/${past.total}</span> <span class="muted">em ${esc(past.date)}</span></p></div>` : ""}
+    ${past?.mindMap ? `<section class="card" style="margin-top:16px"><div class="eyebrow">Seu mapa mental da semana ${weekNo}</div>${mindMapHtml(past.mindMap)}</section>` : ""}
     ${!mat.corrections.length && !mat.vocab.length ? `<p class="muted" style="margin-top:16px">Dica: converse com o tutor durante a semana para a revisão ficar mais personalizada.</p>` : ""}`);
 
   $("#gen").addEventListener("click", async () => {
@@ -936,7 +1075,7 @@ function renderReview() {
     renderReview();
     try {
       const data = await api("/api/review", { profile: { ...state.profile, level: state.plan.level }, week: weekNo, ...mat });
-      quiz = { data, i: 0, answers: [] };
+      quiz = { data, i: -1, answers: [] }; // -1 = tela do mapa mental antes do quiz
     } catch (err) {
       quiz = null;
       toast(err.message);
@@ -949,9 +1088,22 @@ function renderQuiz(weekNo) {
   const { data, i, answers } = quiz;
   const total = data.questions.length;
 
+  if (i === -1) {
+    shell("review", `
+      <div class="page-head"><div><div class="eyebrow">${esc(data.title)}</div>
+        <h2 style="margin-top:6px">O mapa da sua semana</h2>
+        <p class="muted" style="margin-top:8px;max-width:640px">${esc(data.recap)}</p></div></div>
+      <section class="card">${data.mindMap ? mindMapHtml(data.mindMap) : ""}</section>
+      <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn" id="startq">Começar o quiz (${total} perguntas)</button>
+      </div>`);
+    $("#startq").addEventListener("click", () => { quiz.i = 0; renderQuiz(weekNo); });
+    return;
+  }
+
   if (i >= total) {
     const score = answers.filter((a, k) => a === data.questions[k].answerIndex).length;
-    state.reviews[weekNo] = { score, total, date: iso() };
+    state.reviews[weekNo] = { score, total, date: iso(), mindMap: data.mindMap || null };
     if (todayKey() === "sun") markDone(state.plan.dailyMinutes);
     save();
     shell("review", `<div class="card" style="text-align:center;display:grid;gap:14px;justify-items:center;padding:36px 22px">
@@ -961,6 +1113,7 @@ function renderQuiz(weekNo) {
       <p class="muted" style="max-width:460px">${score / total >= 0.75 ? "Excelente! Você fixou o conteúdo da semana." : "Bom treino! Os pontos que você errou vão voltar nas próximas conversas."}</p>
       <div class="card bg-cream" style="border:0;text-align:left;max-width:520px">
         <div class="eyebrow">Desafio final de conversa</div><p style="margin-top:6px">${esc(data.speakingChallenge)}</p></div>
+      ${data.mindMap ? `<div style="width:100%;text-align:left"><div class="eyebrow" style="margin-bottom:6px">Seu mapa da semana (fica salvo na aba Revisão)</div>${mindMapHtml(data.mindMap)}</div>` : ""}
       <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
         <a class="btn" href="#/app/chat">Fazer o desafio com o tutor</a>
         <button class="btn ghost" id="done">Voltar</button>
@@ -973,7 +1126,7 @@ function renderQuiz(weekNo) {
   const answered = answers[i] !== undefined;
   shell("review", `
     <div class="page-head"><div><div class="eyebrow">${esc(data.title)}</div>
-      ${i === 0 ? `<p style="margin-top:8px;max-width:620px">${esc(data.recap)}</p>` : ""}</div>
+</div>
       <span class="muted">${i + 1} / ${total}</span></div>
     <div class="progress"><span style="width:${(i / total) * 100}%"></span></div>
     <div class="card quiz-q">
@@ -996,6 +1149,44 @@ function renderQuiz(weekNo) {
   $("#nextq")?.addEventListener("click", () => { quiz.i++; renderQuiz(weekNo); });
 }
 
+// ---------- Mapa mental ----------
+// Desktop: mapa radial em SVG (centro + ramos ligados por curvas). Celular: árvore vertical legível.
+function mindMapHtml(mm) {
+  const branches = (mm.branches || []).slice(0, 5);
+  const fills = ["#d5ebcb", "#fce8b6", "#cfe2f8", "#fab9a8", "#1f2a44"];
+  const cut = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+  const W = 860, H = 540, cx = W / 2, cy = H / 2, cardW = 220;
+  const n = branches.length || 1;
+  const nodes = branches.map((b, k) => {
+    const angle = -Math.PI / 2 + (k * 2 * Math.PI) / n + (n % 2 === 0 ? Math.PI / n : 0);
+    const items = (b.items || []).slice(0, 4);
+    const h = 40 + items.length * 24;
+    const x = Math.min(W - cardW - 8, Math.max(8, cx + Math.cos(angle) * 280 - cardW / 2));
+    const y = Math.min(H - h - 8, Math.max(8, cy + Math.sin(angle) * 175 - h / 2));
+    return { b, items, h, x, y, fill: fills[k % fills.length], dark: k % fills.length === 4 };
+  });
+  const svg = `<svg class="mm-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Mapa mental: ${esc(mm.center)}">
+    ${nodes.map((nd) => {
+      const tx = nd.x + cardW / 2, ty = nd.y + nd.h / 2;
+      return `<path d="M${cx},${cy} Q${(cx + tx) / 2},${cy} ${tx},${ty}" fill="none" stroke="#141414" stroke-opacity=".35" stroke-width="2"/>`;
+    }).join("")}
+    ${nodes.map((nd) => `
+      <g>
+        <rect x="${nd.x}" y="${nd.y}" width="${cardW}" height="${nd.h}" rx="14" fill="${nd.fill}" stroke="#141414" stroke-opacity=".12"/>
+        <text x="${nd.x + 14}" y="${nd.y + 26}" font-family="Libre Baskerville, Georgia, serif" font-size="16" fill="${nd.dark ? "#fff" : "#141414"}">${esc(cut(nd.b.title, 22))}</text>
+        ${nd.items.map((it, j) => `<text x="${nd.x + 14}" y="${nd.y + 50 + j * 24}" font-family="Inter, system-ui, sans-serif" font-size="13.5" fill="${nd.dark ? "#e8ecf5" : "#333"}">• ${esc(cut(it, 28))}</text>`).join("")}
+      </g>`).join("")}
+    <ellipse cx="${cx}" cy="${cy}" rx="112" ry="46" fill="#5f4c5e"/>
+    <text x="${cx}" y="${cy + 6}" text-anchor="middle" font-family="Libre Baskerville, Georgia, serif" font-size="17" fill="#fff">${esc(cut(mm.center || "", 24))}</text>
+  </svg>`;
+  const tree = `<div class="mm-tree">
+    <div class="mm-center">${esc(mm.center)}</div>
+    ${nodes.map((nd) => `<div class="mm-branch" style="background:${nd.fill};${nd.dark ? "color:#fff" : ""}">
+      <b>${esc(nd.b.title)}</b><ul>${nd.items.map((it) => `<li>${esc(it)}</li>`).join("")}</ul></div>`).join("")}
+  </div>`;
+  return `<div class="mindmap">${svg}${tree}</div>`;
+}
+
 // ---------- Vocabulário ----------
 
 function renderWords() {
@@ -1016,6 +1207,119 @@ function renderWords() {
 
 // ---------- Roteador ----------
 
+// ---------- Login ----------
+
+function renderLogin(mode) {
+  if (!sb) { location.hash = "#/start"; return; }
+  if (session) { afterLogin(); return; }
+  const pending = (() => { try { return sessionStorage.getItem("fluenta:pendingOnb"); } catch { return null; } })();
+  mode ||= pending ? "signup" : "signin";
+  const isSignup = mode === "signup";
+  root.innerHTML = `
+  <main class="onb"><div class="onb-card auth-card">
+    ${pict.talk}
+    <div class="eyebrow">${pending ? "Seu plano está quase pronto" : "Sua conta Fluenta"}</div>
+    <h2 class="q-title">${isSignup ? "Crie sua conta para salvar seu progresso" : "Bem-vindo de volta"}</h2>
+    <p class="q-sub">${isSignup ? "Seu plano, conversas e vocabulário ficam salvos com segurança e acessíveis em qualquer aparelho." : "Entre para continuar de onde parou."}</p>
+    <form id="auth-form" novalidate>
+      <div class="field"><label for="email">E-mail</label>
+        <input class="input" id="email" type="email" autocomplete="email" required /></div>
+      <div class="field"><label for="password">Senha ${isSignup ? "(mínimo 8 caracteres)" : ""}</label>
+        <input class="input" id="password" type="password" minlength="8" autocomplete="${isSignup ? "new-password" : "current-password"}" required /></div>
+      <div class="error-box" id="auth-msg" hidden></div>
+      <button class="btn block" type="submit" id="auth-submit">${isSignup ? "Criar conta" : "Entrar"}</button>
+    </form>
+    <div class="auth-links">
+      <button class="link-btn" id="switch">${isSignup ? "Já tenho conta: entrar" : "Não tenho conta: criar"}</button>
+      ${isSignup ? "" : `<button class="link-btn" id="forgot">Esqueci minha senha</button>`}
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:14px">Suas mensagens são enviadas a um provedor de IA para gerar as respostas do tutor. Não compartilhe dados sensíveis. O áudio da sua voz não é salvo.</p>
+  </div></main>`;
+
+  const msg = (text, ok = false) => {
+    const box = $("#auth-msg");
+    box.hidden = false;
+    box.textContent = text;
+    box.className = ok ? "ok-box" : "error-box";
+  };
+  $("#switch").addEventListener("click", () => renderLogin(isSignup ? "signin" : "signup"));
+  $("#forgot")?.addEventListener("click", async () => {
+    const email = $("#email").value.trim();
+    if (!email) return msg("Digite seu e-mail acima e clique de novo em \"Esqueci minha senha\".");
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}/` });
+    msg(error ? traduzErro(error) : "Se existir uma conta com esse e-mail, enviamos um link para criar uma nova senha.", !error);
+  });
+  $("#auth-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = $("#email").value.trim();
+    const password = $("#password").value;
+    if (!/^\S+@\S+\.\S+$/.test(email)) return msg("Digite um e-mail válido.");
+    if (password.length < 8) return msg("A senha precisa ter pelo menos 8 caracteres.");
+    const btn = $("#auth-submit");
+    btn.disabled = true;
+    try {
+      if (isSignup) {
+        const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: `${location.origin}/` } });
+        if (error) return msg(traduzErro(error));
+        if (!data.session) return msg("Conta criada! Enviamos um link de confirmação para o seu e-mail. Confirme e volte aqui para entrar.", true);
+        session = data.session;
+      } else {
+        const { data, error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) return msg(traduzErro(error));
+        session = data.session;
+      }
+      await pullState();
+      afterLogin();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function traduzErro(error) {
+  const m = (error?.message || "").toLowerCase();
+  if (m.includes("invalid login")) return "E-mail ou senha incorretos.";
+  if (m.includes("email not confirmed")) return "Confirme seu e-mail pelo link que enviamos antes de entrar.";
+  if (m.includes("already registered") || m.includes("already been registered")) return "Este e-mail já tem conta. Clique em \"Já tenho conta: entrar\".";
+  if (m.includes("rate limit") || m.includes("too many")) return "Muitas tentativas. Aguarde alguns minutos e tente de novo.";
+  if (m.includes("password")) return "Senha fraca. Use pelo menos 8 caracteres, misturando letras e números.";
+  return "Não foi possível concluir agora. Tente novamente.";
+}
+
+function afterLogin() {
+  renderTopbar();
+  let pending = null;
+  try { pending = JSON.parse(sessionStorage.getItem("fluenta:pendingOnb") || "null"); sessionStorage.removeItem("fluenta:pendingOnb"); } catch { /* ignore */ }
+  if (state.plan) { location.hash = "#/app"; return; }
+  if (pending) { onb.a = pending; generatePlan(); return; }
+  location.hash = "#/start";
+}
+
+function renderReset() {
+  if (!sb || !session) { location.hash = "#/login"; return; }
+  root.innerHTML = `
+  <main class="onb"><div class="onb-card auth-card">
+    <div class="eyebrow">Nova senha</div>
+    <h2 class="q-title">Crie uma nova senha</h2>
+    <form id="reset-form">
+      <div class="field"><label for="np">Nova senha (mínimo 8 caracteres)</label>
+        <input class="input" id="np" type="password" minlength="8" autocomplete="new-password" required /></div>
+      <div class="error-box" id="reset-msg" hidden></div>
+      <button class="btn block" type="submit">Salvar nova senha</button>
+    </form>
+  </div></main>`;
+  $("#reset-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const password = $("#np").value;
+    const box = $("#reset-msg");
+    if (password.length < 8) { box.hidden = false; box.textContent = "A senha precisa ter pelo menos 8 caracteres."; return; }
+    const { error } = await sb.auth.updateUser({ password });
+    if (error) { box.hidden = false; box.textContent = traduzErro(error); return; }
+    toast("Senha atualizada!");
+    afterLogin();
+  });
+}
+
 function route() {
   const h = location.hash || "#/";
   listening = false;
@@ -1024,7 +1328,11 @@ function route() {
   renderTopbar();
   window.scrollTo(0, 0);
 
+  if (h === "#/login") { renderLogin(); return; }
+  if (h === "#/reset") { renderReset(); return; }
+
   if (h.startsWith("#/app")) {
+    if (sb && !session) { location.hash = "#/login"; return; }
     if (!state.plan) { location.hash = "#/start"; return; }
     const sub = h.split("/")[2] || "";
     ({ "": renderToday, plan: renderPlan, chat: renderChat, review: renderReview, words: renderWords }[sub] || renderToday)();
@@ -1040,4 +1348,4 @@ function route() {
 }
 
 window.addEventListener("hashchange", route);
-route();
+ready.then(route);

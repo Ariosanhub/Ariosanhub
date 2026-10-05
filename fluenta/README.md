@@ -47,7 +47,17 @@ Variáveis opcionais no `.env`:
 | `ANTHROPIC_WORKSPACE_ID` | Obrigatória se a chave tiver escopo de **Organização** (`sk-ant-usr-...`). Use o ID `wrkspc_...` do workspace |
 | `FLUENTA_MODEL` | Modelo geral (padrão `claude-opus-5-5`) |
 | `FLUENTA_CHAT_MODEL` | Modelo só do tutor, por exemplo `claude-sonnet-5-5` para respostas mais rápidas (padrão: o mesmo do `FLUENTA_MODEL`) |
+| `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` | Liga login e banco na nuvem. Sem elas, os dados ficam só no navegador |
+| `FLUENTA_DAILY_AI_LIMIT` | Limite de chamadas de IA por aluno por dia (padrão 120) |
 | `PORT` | Porta do servidor (padrão 3000) |
+
+## Segurança (com Supabase ligado)
+
+- **Login obrigatório** para qualquer chamada de IA; o servidor valida o token no Supabase Auth a cada pedido.
+- **RLS** em todas as tabelas: cada aluno só lê e altera a própria linha (`supabase/migrations/001_init.sql`).
+- **Limite diário de IA por aluno** controlado no banco (`consume_ai_credit`), que o aluno não consegue editar.
+- **Cabeçalhos de segurança** (CSP, anti-iframe, nosniff) e a chave secreta do Supabase nunca é usada.
+- **Áudio da voz não é salvo**; ao sair da conta, os dados locais do navegador são apagados.
 
 ## Arquitetura
 

@@ -26,6 +26,13 @@ const MODEL = process.env.FLUENTA_MODEL || "claude-opus-5-5";
 const CHAT_MODEL = process.env.FLUENTA_CHAT_MODEL || MODEL;
 const DEMO = !process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN;
 
+// Supabase (login + banco). Sem essas variáveis o app roda local, salvando só no navegador.
+const SUPABASE_URL = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || ""; // chave pública por natureza; a segurança vem do RLS
+const AUTH = Boolean(SUPABASE_URL && SUPABASE_KEY);
+const DAILY_AI_LIMIT = Number(process.env.FLUENTA_DAILY_AI_LIMIT || 120); // chamadas de IA por aluno por dia
+const AI_ROUTES = new Set(["/api/plan", "/api/chat", "/api/review"]);
+
 // Chave com escopo de Organização precisa dizer em qual workspace rodar (ANTHROPIC_WORKSPACE_ID=wrkspc_...).
 const client = DEMO
   ? null
@@ -102,6 +109,17 @@ const REVIEW_SCHEMA = strictObject({
     }),
   },
   speakingChallenge: { type: "string", description: "Desafio de conversa para fechar a revisão" },
+  mindMap: strictObject({
+    center: { type: "string", description: "Tema central da semana em 2-4 palavras" },
+    branches: {
+      type: "array",
+      description: "3 a 5 ramos: ex. Vocabulário, Estruturas, Situações, Erros que você venceu",
+      items: strictObject({
+        title: { type: "string" },
+        items: { type: "array", items: { type: "string" }, description: "2 a 4 itens curtos (máx. 4 palavras), em inglês quando forem expressões" },
+      }),
+    },
+  }),
 });
 
 // ---------- Chamada ao Claude ----------
@@ -174,7 +192,9 @@ Regras:
 
 const REVIEW_SYSTEM = `Você cria a aula de revisão semanal da Fluenta. Use os erros e o vocabulário reais da semana do aluno.
 Crie 8 questões de múltipla escolha (4 opções cada), misturando: corrigir frase, escolher a palavra certa, traduzir expressão.
-Explicações no idioma nativo do aluno. Feche com um desafio de conversa ligado à rotina dele.`;
+Explicações no idioma nativo do aluno. Feche com um desafio de conversa ligado à rotina dele.
+Monte também um mapa mental da semana (mindMap) que resuma visualmente o que ele aprendeu: tema central e 3-5 ramos
+com itens curtos e concretos tirados das conversas reais (expressões, estruturas, situações, erros superados).`;
 
 // ---------- Respostas simuladas (modo demo) ----------
 
@@ -259,6 +279,15 @@ function demoReview(body) {
     recap: `Você praticou ${body.messagesCount || 0} mensagens e aprendeu ${vocab.length} expressões. Vamos fixar!`,
     questions,
     speakingChallenge: "Conte ao tutor, em 4 frases, como foi sua semana usando 2 palavras novas.",
+    mindMap: {
+      center: "Minha semana",
+      branches: [
+        { title: "Vocabulário", items: vocab.slice(0, 4).map((v) => v.term) },
+        { title: "Estruturas", items: ["I am 30 years old", "I work at...", "Present simple"] },
+        { title: "Situações", items: ["Apresentação", "Rotina de trabalho", "Tempo livre"] },
+        { title: "Erros vencidos", items: ["have → be (idade)", "work in → work at"] },
+      ],
+    },
   };
 }
 
@@ -274,7 +303,11 @@ async function readJson(req) {
 }
 
 const routes = {
-  "/api/config": async () => ({ demo: DEMO, model: DEMO ? null : MODEL }),
+  "/api/config": async () => ({
+    demo: DEMO,
+    model: DEMO ? null : MODEL,
+    supabase: AUTH ? { url: SUPABASE_URL, key: SUPABASE_KEY } : null,
+  }),
 
   "/api/plan": async (body) => {
     const p = body.profile || {};
@@ -330,6 +363,49 @@ const MIME = {
   ".webmanifest": "application/manifest+json",
 };
 
+// Com Supabase ligado, toda chamada de IA exige um aluno logado e respeita o limite diário.
+// O token é validado no próprio Supabase Auth; o contador vive no banco (função consume_ai_credit).
+async function requireUser(req) {
+  if (!AUTH) return null;
+  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!token) throw Object.assign(new Error("Entre na sua conta para continuar."), { status: 401 });
+  const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}` };
+
+  const who = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers });
+  if (!who.ok) throw Object.assign(new Error("Sua sessão expirou. Entre novamente."), { status: 401 });
+  const user = await who.json();
+
+  const credit = await fetch(`${SUPABASE_URL}/rest/v1/rpc/consume_ai_credit`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ p_limit: DAILY_AI_LIMIT }),
+  });
+  if (!credit.ok) throw Object.assign(new Error("Não consegui validar seu limite de uso."), { status: 503 });
+  if ((await credit.json()) !== true) {
+    throw Object.assign(new Error("Você atingiu o limite de prática de hoje. Volte amanhã!"), { status: 429 });
+  }
+  return user;
+}
+
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "X-Frame-Options": "DENY",
+  "Permissions-Policy": "microphone=(self), camera=(), geolocation=()",
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "script-src 'self' https://cdn.jsdelivr.net",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://cdn.jsdelivr.net",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; "),
+};
+
 async function serveStatic(req, res) {
   const url = new URL(req.url, "http://localhost");
   let filePath = path.normalize(path.join(PUBLIC_DIR, decodeURIComponent(url.pathname)));
@@ -344,7 +420,11 @@ async function serveStatic(req, res) {
     filePath = path.join(PUBLIC_DIR, "index.html"); // SPA fallback
   }
   const data = await fs.readFile(filePath);
-  res.writeHead(200, { "Content-Type": MIME[path.extname(filePath)] || "application/octet-stream" });
+  res.writeHead(200, {
+    ...SECURITY_HEADERS,
+    "Content-Type": MIME[path.extname(filePath)] || "application/octet-stream",
+    "Cache-Control": "no-cache", // sempre confere se há versão nova (evita rodar código antigo após git pull)
+  });
   res.end(data);
 }
 
@@ -354,11 +434,15 @@ const server = http.createServer(async (req, res) => {
   if (!handler) return serveStatic(req, res);
 
   try {
+    if (AI_ROUTES.has(pathname)) {
+      if (req.method !== "POST") throw Object.assign(new Error("Método não permitido."), { status: 405 });
+      await requireUser(req);
+    }
     const body = req.method === "POST" ? await readJson(req) : {};
     const started = Date.now();
     const result = await handler(body);
     if (req.method === "POST") console.log(`[${pathname}] ${((Date.now() - started) / 1000).toFixed(1)}s`);
-    res.writeHead(200, { "Content-Type": "application/json" });
+    res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(result));
   } catch (err) {
     let status = err.status || 500;
@@ -369,8 +453,9 @@ const server = http.createServer(async (req, res) => {
     else if (err instanceof Anthropic.BadRequestError && /credit balance/i.test(err.message)) message = "Sua conta da Anthropic está sem crédito. Adicione fundos em console.anthropic.com > Faturamento.";
     else if (err instanceof Anthropic.APIConnectionError) { status = 503; message = "Sem conexão com a IA."; }
     else if (err instanceof SyntaxError) { status = 400; message = "JSON inválido."; }
-    console.error(`[${pathname}]`, err);
-    res.writeHead(status, { "Content-Type": "application/json" });
+    if (status >= 500) console.error(`[${pathname}]`, err);
+    else console.log(`[${pathname}] ${status} ${message}`);
+    res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ error: message }));
   }
 });
@@ -381,4 +466,7 @@ server.listen(PORT, () => {
   if (DEMO) console.log("MODO DEMO: nenhuma chave encontrada. Crie o arquivo .env com ANTHROPIC_API_KEY=sk-ant-...");
   else if (key && !key.startsWith("sk-ant-")) console.log(`ATENÇÃO: a chave carregada não parece válida (começa com "${key.slice(0, 6)}"). Ela deve começar com sk-ant-`);
   else if (key) console.log(`Chave carregada: ${key.slice(0, 10)}...${key.slice(-4)}`);
+  console.log(AUTH
+    ? `Supabase ligado: login obrigatório para a IA, limite de ${DAILY_AI_LIMIT} chamadas/dia por aluno.`
+    : "Supabase desligado: dados ficam só neste navegador (defina SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY).");
 });

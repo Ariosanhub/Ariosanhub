@@ -340,3 +340,64 @@ footer.site { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size
 .commit-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .say-btn { border: 0; background: transparent; cursor: pointer; font-size: 12px; color: var(--ink-soft); text-decoration: underline; margin-left: 6px; }
 .msg.me .tools { justify-content: flex-end; }
+
+/* ---------- Celebração de dia concluído ---------- */
+.celebrate {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px;
+  background: rgba(31, 42, 68, .55); backdrop-filter: blur(4px); animation: fade-in .25s ease;
+}
+@keyframes fade-in { from { opacity: 0; } }
+.celebrate-card {
+  position: relative; z-index: 2; width: 100%; max-width: 420px; background: var(--paper); border-radius: 28px;
+  padding: 30px 24px 22px; text-align: center; display: grid; gap: 10px; justify-items: center;
+  box-shadow: 0 30px 80px rgba(0,0,0,.25); animation: pop .45s cubic-bezier(.2, 1.4, .4, 1);
+}
+@keyframes pop { from { transform: scale(.7); opacity: 0; } }
+.big-flame .streak-flame { width: 96px; height: 112px; }
+.celebrate-card h2 { font-size: 30px; }
+.week-flames { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; width: 100%; margin: 6px 0; }
+.week-flames span {
+  height: 54px; border-radius: 12px; background: rgba(95, 76, 94, .08); display: grid; place-items: center;
+  align-content: center; gap: 2px; font-size: 10px; color: var(--ink-soft);
+}
+.week-flames span.lit { background: var(--cream); }
+.week-flames .streak-flame { width: 20px; height: 24px; animation: none; }
+.week-flames small { font-size: 10px; }
+.celebrate-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; margin-bottom: 6px; }
+.celebrate-stats div { background: var(--white); border: 1px solid var(--line); border-radius: 14px; padding: 10px 4px; display: grid; }
+.celebrate-stats b { font-family: var(--serif); font-weight: 400; font-size: 24px; }
+.celebrate-stats small { font-size: 11px; color: var(--ink-soft); }
+.confetti { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 1; }
+.confetti i {
+  position: absolute; top: -20px; width: 10px; height: 16px; border-radius: 3px; opacity: .95;
+  animation-name: fall; animation-timing-function: cubic-bezier(.3, .7, .6, 1); animation-fill-mode: forwards;
+}
+@keyframes fall { to { top: 105%; transform: rotate(540deg) translateX(40px); opacity: .6; } }
+@media (prefers-reduced-motion: reduce) { .confetti { display: none; } .celebrate-card { animation: none; } }
+
+/* dia concluído na faixa da semana */
+.wday .stamp .streak-flame { width: 16px; height: 19px; animation: none; }
+.wday.done { box-shadow: inset 0 0 0 2px rgba(20, 20, 20, .18); }
+
+/* ---------- Mapa mental ---------- */
+.mindmap { margin-top: 10px; }
+.mm-svg { width: 100%; height: auto; }
+.mm-tree { display: none; }
+@media (max-width: 640px) {
+  .mm-svg { display: none; }
+  .mm-tree { display: grid; gap: 8px; padding-left: 14px; border-left: 2px solid var(--line); }
+  .mm-center { background: var(--plum); color: var(--white); font-family: var(--serif); border-radius: 999px; padding: 8px 14px; justify-self: start; margin-left: -14px; }
+  .mm-branch { border-radius: 14px; padding: 10px 12px; position: relative; }
+  .mm-branch::before { content: ""; position: absolute; left: -16px; top: 18px; width: 14px; border-top: 2px solid var(--line); }
+  .mm-branch b { font-family: var(--serif); font-weight: 400; }
+  .mm-branch ul { margin: 4px 0 0; padding-left: 18px; font-size: 14px; }
+}
+
+/* ---------- Login ---------- */
+.auth-card { display: grid; gap: 4px; }
+.auth-card > .pict { width: 72px; height: 72px; margin-bottom: 6px; }
+.auth-links { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.link-btn { border: 0; background: none; padding: 0; cursor: pointer; text-decoration: underline; color: var(--ink-soft); font-size: 14px; }
+.ok-box { background: var(--mint); border: 1px solid var(--ok); color: var(--ink); padding: 10px 12px; border-radius: 12px; font-size: 14px; margin-bottom: 12px; }
+#auth-msg.error-box { margin-bottom: 12px; }
+.audience .title { font-size: 19px; }
